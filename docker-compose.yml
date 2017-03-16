@@ -1,0 +1,95 @@
+version: '2'
+
+services:
+
+    ### Applications Code Container #############################
+    applications:
+        image: tianon/true
+        hostname: tide_api_application
+        volumes:
+            - ./data/wordpress:/var/www/html # Full WordPress project
+            - ./wp-plugins/wp-tide-api:/var/www/html/wp-content/plugins/wp-tide-api # Plugin development
+            #- ./theme-name/trunk/:/var/www/html/wp-content/themes/theme-name # Theme development
+            - ./logs/nginx:/srv/logs/nginx
+            - ./logs/php-fpm:/srv/logs/php-fpm
+
+    ### Workspace Utilities Container ###########################
+    workspace:
+        build:
+            context: ./docker/workspace
+            args:
+                - INSTALL_NODE=true
+                - INSTALL_YARN=false
+                - COMPOSER_GLOBAL_INSTALL=true
+                - INSTALL_WORKSPACE_SSH=true
+                - PUID=1000
+                - PGID=1000
+                - NODE_VERSION=stable
+                - YARN_VERSION=latest
+                - TZ=UTC
+        volumes_from:
+            - applications
+        # extra_hosts:
+        #     - "dockerhost:${DOCKERHOST_IP}"
+        ports:
+           - "2222:22"
+        tty: true
+        networks:
+            - tide-api-network-frontend
+            - tide-api-network-backend
+
+    ### Nginx Container #############################
+    nginx:
+        image: nginx:1.10.3-alpine
+        hostname: tide_api_nginx
+        ports:
+            - 80:80
+            - 443:443
+        volumes_from:
+            - applications
+        volumes:
+            - ./config/nginx/tide-api.conf.template:/etc/nginx/conf.d/tide-api.conf.template
+            # - ./config/nginx/tide-api.conf.template:/etc/nginx/conf.d/default.conf
+        environment:
+           - NGINX_HOST=${NGINX_HOST}
+        command: /bin/ash -c "envsubst '$${NGINX_HOST}' < /etc/nginx/conf.d/tide-api.conf.template > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"
+        networks:
+            - tide-api-network-frontend
+
+    ### WordPress Container #############################
+    wordpress:
+        build:
+            context: ./docker/wordpress
+        hostname: tide_api_wp
+        volumes_from:
+            - applications
+        environment:
+            WORDPRESS_DB_HOST: ${WORDPRESS_DB_HOST}
+            WORDPRESS_DB_NAME: ${WORDPRESS_DB_NAME}
+            WORDPRESS_DB_USER: ${WORDPRESS_DB_USER}
+            WORDPRESS_DB_PASSWORD: ${WORDPRESS_DB_PASSWORD}
+        networks:
+            - tide-api-network-frontend
+            - tide-api-network-backend
+
+    ### DB Container #############################
+    db:
+        image: mysql:latest # https://hub.docker.com/_/mysql/ - or mariadb https://hub.docker.com/_/mariadb
+        hostname: tide_api_mysql
+        ports:
+              - 3306:3306
+        volumes:
+          - ./data/db:/var/lib/mysql
+        environment:
+            MYSQL_DATABASE: ${MYSQL_DATABASE}
+            MYSQL_USER: ${MYSQL_USER}
+            MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+            MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+        networks:
+            - tide-api-network-backend
+
+networks:
+    tide-api-network-backend:
+        driver: bridge
+    tide-api-network-frontend:
+        driver: bridge
